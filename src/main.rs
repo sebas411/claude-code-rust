@@ -1,7 +1,7 @@
 use async_openai::{Client, config::OpenAIConfig};
 use clap::Parser;
 use serde_json::{Value, json};
-use std::{env, process};
+use std::{env, fs, process};
 
 #[derive(Parser)]
 #[command(author, version, about)]
@@ -62,6 +62,31 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     if let Some(content) = response["choices"][0]["message"]["content"].as_str() {
         println!("{}", content);
+    }
+
+    if let Some(calls) = response["choices"][0]["message"]["tool_calls"].as_array() {
+        let function = &calls[0]["function"].as_object().unwrap();
+        let name = function["name"].as_str().unwrap();
+        let arguments = function["arguments"].as_str().unwrap();
+        match name {
+            "Read" => {
+                let arguments = serde_json::from_str::<Value>(arguments).unwrap();
+                let filepath = arguments["file_path"].as_str().unwrap();
+                match fs::read_to_string(filepath) {
+                    Ok(contents) => {
+                        println!("{}", contents);
+                    }
+                    Err(_) => {
+                        eprintln!("File cannot be read as a string")
+                    }
+                }
+            },
+            _ => {
+                eprintln!("Model requested unavailable function");
+                process::exit(1);
+            }
+        }
+
     }
 
     Ok(())
