@@ -1,7 +1,7 @@
 use async_openai::{Client, config::OpenAIConfig};
 use clap::Parser;
 use serde_json::{Value, json};
-use std::{env, fs::{self, File}, io::Write, process};
+use std::{env, fs::{self, File}, io::Write, process::{self, Command}};
 
 #[derive(Parser)]
 #[command(author, version, about)]
@@ -66,6 +66,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
             }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "Bash",
+                "description": "Execute a shell command",
+                "parameters": {
+                    "type": "object",
+                    "required": ["command"],
+                    "properties": {
+                        "command": {
+                        "type": "string",
+                        "description": "The command to execute"
+                        }
+                    }
+                }
+            }
         }
     ]);
 
@@ -124,7 +141,31 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         "content": "Contents written."
                     });
                     messages.push(response);
-                }
+                },
+                "Bash" => {
+                    let arguments = serde_json::from_str::<Value>(arguments).unwrap();
+                    let command = arguments["command"].as_str().unwrap();
+                    let output = Command::new("sh")
+                        .arg("-c")
+                        .arg(command)
+                        .output()
+                        .expect("failed to execute process");
+                    let stdout = String::from_utf8(output.stdout)?;
+                    let stderr = String::from_utf8(output.stderr)?;
+                    let status = output.status;
+                    let out;
+                    if status.success() {
+                        out = stdout;
+                    } else {
+                        out = stderr;
+                    }
+                    let response = json!({
+                        "role": "tool",
+                        "tool_call_id": call_id,
+                        "content": out
+                    });
+                    messages.push(response);
+                },
                 _ => {
                     eprintln!("Model requested unavailable function");
                     process::exit(1);
