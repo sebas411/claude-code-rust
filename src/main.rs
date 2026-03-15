@@ -28,65 +28,77 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let client = Client::with_config(config);
 
-    let response: Value = client
-        .chat()
-        .create_byot(json!({
-            "messages": [
-                {
-                    "role": "user",
-                    "content": args.prompt
-                }
-            ],
-            "model": "anthropic/claude-haiku-4.5",
-            "tools": [
-                {
-                    "type": "function",
-                    "function": {
-                        "name": "Read",
-                        "description": "Read and return the contents of a file",
-                        "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "file_path": {
-                            "type": "string",
-                            "description": "The path to the file to read"
+    let mut messages = vec![json!(
+        {
+            "role": "user",
+            "content": args.prompt
+        }
+    )];
+    loop {
+        let response: Value = client
+            .chat()
+            .create_byot(json!({
+                "messages": messages,
+                "model": "anthropic/claude-haiku-4.5",
+                "tools": [
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": "Read",
+                            "description": "Read and return the contents of a file",
+                            "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "file_path": {
+                                    "type": "string",
+                                    "description": "The path to the file to read"
+                                }
+                            },
+                            "required": ["file_path"]
                             }
-                        },
-                        "required": ["file_path"]
+                        }
+                    },
+                ],
+            }))
+            .await?;
+
+        let message = response["choices"][0]["message"].clone();
+    
+        if let Some(calls) = message["tool_calls"].as_array() {
+            let call_id = calls[0]["id"].clone();
+            let function = &calls[0]["function"].as_object().unwrap();
+            let name = function["name"].as_str().unwrap();
+            let arguments = function["arguments"].as_str().unwrap();
+            messages.push(message.clone());
+            match name {
+                "Read" => {
+                    let arguments = serde_json::from_str::<Value>(arguments).unwrap();
+                    let filepath = arguments["file_path"].as_str().unwrap();
+                    match fs::read_to_string(filepath) {
+                        Ok(contents) => {
+                            let response = json!({
+                                "role": "tool",
+                                "tool_call_id": call_id,
+                                "content": contents
+                            });
+                            messages.push(response);
+                        }
+                        Err(_) => {
+                            eprintln!("File cannot be read as a string")
                         }
                     }
                 },
-            ],
-        }))
-        .await?;
-
-    if let Some(content) = response["choices"][0]["message"]["content"].as_str() {
-        println!("{}", content);
-    }
-
-    if let Some(calls) = response["choices"][0]["message"]["tool_calls"].as_array() {
-        let function = &calls[0]["function"].as_object().unwrap();
-        let name = function["name"].as_str().unwrap();
-        let arguments = function["arguments"].as_str().unwrap();
-        match name {
-            "Read" => {
-                let arguments = serde_json::from_str::<Value>(arguments).unwrap();
-                let filepath = arguments["file_path"].as_str().unwrap();
-                match fs::read_to_string(filepath) {
-                    Ok(contents) => {
-                        println!("{}", contents);
-                    }
-                    Err(_) => {
-                        eprintln!("File cannot be read as a string")
-                    }
+                _ => {
+                    eprintln!("Model requested unavailable function");
+                    process::exit(1);
                 }
-            },
-            _ => {
-                eprintln!("Model requested unavailable function");
-                process::exit(1);
             }
+        } else {
+            if let Some(content) = message["content"].as_str() {
+                println!("{}", content);
+            }
+            break;
         }
-
     }
 
     Ok(())
