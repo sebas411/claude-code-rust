@@ -1,7 +1,7 @@
 use async_openai::{Client, config::OpenAIConfig};
 use clap::Parser;
 use serde_json::{Value, json};
-use std::{env, fs, process};
+use std::{env, fs::{self, File}, io::Write, process};
 
 #[derive(Parser)]
 #[command(author, version, about)]
@@ -28,37 +28,61 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let client = Client::with_config(config);
 
+    let tools = json!([
+        {
+            "type": "function",
+            "function": {
+                "name": "Read",
+                "description": "Read and return the contents of a file",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "file_path": {
+                            "type": "string",
+                            "description": "The path to the file to read"
+                        }
+                    },
+                    "required": ["file_path"]
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "Write",
+                "description": "Write content to a file",
+                "parameters": {
+                    "type": "object",
+                    "required": ["file_path", "content"],
+                    "properties": {
+                        "file_path": {
+                            "type": "string",
+                            "description": "The path of the file to write to"
+                        },
+                        "content": {
+                            "type": "string",
+                            "description": "The content to write to the file"
+                        }
+                    }
+                }
+            }
+        }
+    ]);
+
     let mut messages = vec![json!(
         {
             "role": "user",
             "content": args.prompt
         }
     )];
+
     loop {
         let response: Value = client
             .chat()
             .create_byot(json!({
                 "messages": messages,
                 "model": "anthropic/claude-haiku-4.5",
-                "tools": [
-                    {
-                        "type": "function",
-                        "function": {
-                            "name": "Read",
-                            "description": "Read and return the contents of a file",
-                            "parameters": {
-                            "type": "object",
-                            "properties": {
-                                "file_path": {
-                                    "type": "string",
-                                    "description": "The path to the file to read"
-                                }
-                            },
-                            "required": ["file_path"]
-                            }
-                        }
-                    },
-                ],
+                "tools": tools,
             }))
             .await?;
 
@@ -88,6 +112,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         }
                     }
                 },
+                "Write" => {
+                    let arguments = serde_json::from_str::<Value>(arguments).unwrap();
+                    let filepath = arguments["file_path"].as_str().unwrap();
+                    let content = arguments["content"].as_str().unwrap();
+                    let mut file = File::create(filepath)?;
+                    file.write_all(content.as_bytes())?;
+                    let response = json!({
+                        "role": "tool",
+                        "tool_call_id": call_id,
+                        "content": "Contents written."
+                    });
+                    messages.push(response);
+                }
                 _ => {
                     eprintln!("Model requested unavailable function");
                     process::exit(1);
