@@ -1,7 +1,8 @@
+use anyhow::anyhow;
 use async_openai::{Client, config::OpenAIConfig};
 use clap::Parser;
 use serde_json::{Value, json};
-use std::{env, process};
+use std::{env, fs, path::Path, process};
 
 use crate::modules::tools::ToolHandler;
 
@@ -33,13 +34,36 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let client = Client::with_config(config);
 
     let tool_handler = ToolHandler::new();
+    
+    let mut system_prompt = "You have access to the following skills:\n\n".to_string();
+    let skills_path = Path::new(".claude/skills");
+    if skills_path.is_dir() {
+        for skill in fs::read_dir(skills_path)? {
+            let skill_entry = skill?;
+            let skill_path = skill_entry.path();
+            let filename = skill_path.join("SKILL.md");
+            if filename.exists() {
+                let contents = fs::read_to_string(filename)?;
+                let frontmatter = contents.split("---\n").nth(1).ok_or(anyhow!("Frontmatter missing from file"))?;
+                let frontmatter_yaml = serde_yaml::from_str::<serde_yaml::Value>(frontmatter)?;
+                let frontmatter_yaml = frontmatter_yaml.as_mapping().ok_or("Value is not mapping")?;
+                let name = frontmatter_yaml.get("name").ok_or("name field not found")?.as_str().unwrap();
+                let description = frontmatter_yaml.get("description").ok_or("name field not found")?.as_str().unwrap();
+                system_prompt.push_str(&format!("- {}: {}\n", name, description));
+            }
+        }
+    }
 
-    let mut messages = vec![json!(
-        {
+    let mut messages = vec![
+        json!({
+            "role": "system",
+            "content": system_prompt
+        }), 
+        json!({
             "role": "user",
             "content": args.prompt
-        }
-    )];
+        })
+    ];
 
     loop {
         let response: Value = client
