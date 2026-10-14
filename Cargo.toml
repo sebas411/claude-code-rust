@@ -13,3 +13,4 @@ serde_json = "1.0.149"                                                # JSON ser
 anyhow = "1.0.104"
 serde_yaml = "0.9.34"
 serde = "1.0.229"
+regex = "1.13.1"
