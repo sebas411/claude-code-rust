@@ -70,28 +70,38 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     }
-    
-    let user_prompt;
-    if args.prompt.starts_with('/') && skills.contains(&args.prompt.split(' ').nth(0).unwrap().strip_prefix('/').unwrap().to_string()) {
-        let contents = fs::read_to_string(format!(".claude/skills/{}/SKILL.md", args.prompt.split(' ').nth(0).unwrap().strip_prefix('/').unwrap()))?;
-        let body = contents.split("---").nth(2).ok_or(anyhow!("Skill contains no body"))?.to_string();
-
-        let arguments = args.prompt.split(' ').skip(1).collect::<Vec<&str>>();
-        user_prompt = replace_args(&body, arguments);
-    } else {
-        user_prompt = args.prompt;
-    }
 
     let mut messages = vec![
         json!({
             "role": "system",
             "content": system_prompt
-        }), 
-        json!({
-            "role": "user",
-            "content": user_prompt
         })
     ];
+    
+    let mut used_skills = vec![];
+    if args.prompt.starts_with('/') && skills.contains(&args.prompt.split(' ').nth(0).unwrap().strip_prefix('/').unwrap().to_string()) {
+        let current_skill = args.prompt.split(' ').nth(0).unwrap().strip_prefix('/').unwrap();
+        used_skills.push(current_skill.to_string());
+        let mut arguments = args.prompt.split(' ').skip(1).collect::<Vec<&str>>();
+        
+        while arguments.len() > 0 && arguments[0].starts_with('/') && skills.contains(&arguments[0].strip_prefix('/').unwrap().to_string()) {
+            used_skills.push(arguments.remove(0).to_string());
+        }
+        
+        for skill in used_skills {
+            let contents = fs::read_to_string(format!(".claude/skills/{}/SKILL.md", skill))?;
+            let body = contents.split("---").nth(2).ok_or(anyhow!("Skill contains no body"))?.to_string();
+            messages.push(json!({
+                "role": "user",
+                "content": replace_args(&body, arguments.clone())
+            }))
+        }
+    } else {
+        messages.push(json!({
+            "role": "user",
+            "content": args.prompt
+        }))
+    }
 
     loop {
         let response: Value = client
