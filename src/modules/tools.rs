@@ -1,4 +1,4 @@
-use std::{fs::{self, File}, io::Write, process::Command};
+use std::{fs::{self, File}, io::Write, path::Path, process::Command};
 
 use anyhow::{Result, anyhow};
 use serde_json::{Value, json};
@@ -77,7 +77,21 @@ impl ToolHandler {
         match name {
             "Read" => {
                 let arguments = serde_json::from_str::<Value>(arguments).unwrap();
-                let filepath = arguments["file_path"].as_str().unwrap();
+                let filepath = Path::new(arguments["file_path"].as_str().unwrap());
+                if !filepath.exists() {
+                    return Ok(json!({
+                        "role": "tool",
+                        "tool_call_id": call_id,
+                        "content": "ERR(Read tool): file doesn't exist."
+                    }))
+                }
+                if filepath.is_dir() {
+                    return Ok(json!({
+                        "role": "tool",
+                        "tool_call_id": call_id,
+                        "content": "ERR(Read tool): path provided is a directory, cannot read."
+                    }))
+                }
                 match fs::read_to_string(filepath) {
                     Ok(contents) => {
                         let response = json!({

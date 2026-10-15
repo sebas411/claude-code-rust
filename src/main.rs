@@ -85,15 +85,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mut arguments = args.prompt.split(' ').skip(1).collect::<Vec<&str>>();
         
         while arguments.len() > 0 && arguments[0].starts_with('/') && skills.contains(&arguments[0].strip_prefix('/').unwrap().to_string()) {
-            used_skills.push(arguments.remove(0).to_string());
+            used_skills.push(arguments.remove(0).strip_prefix('/').unwrap().to_string());
         }
         
         for skill in used_skills {
             let contents = fs::read_to_string(format!(".claude/skills/{}/SKILL.md", skill))?;
             let body = contents.split("---").nth(2).ok_or(anyhow!("Skill contains no body"))?.to_string();
+            let complete_message = format!("Skill: {} (this skill's directory is: .claude/skills/{}/)\nPaths in the instructions below are relative to that folder.\n\n{}", skill, skill, replace_args(&body, arguments.clone()));
             messages.push(json!({
                 "role": "user",
-                "content": replace_args(&body, arguments.clone())
+                "content": complete_message
             }))
         }
     } else {
