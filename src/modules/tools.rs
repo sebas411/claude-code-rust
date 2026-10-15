@@ -1,7 +1,22 @@
 use std::{fs::{self, File}, io::Write, path::Path, process::Command};
 
 use anyhow::{Result, anyhow};
+use regex::{Captures, Regex};
 use serde_json::{Value, json};
+
+pub fn replace_args(body: &str, args: Vec<&str>) -> String {
+    let re = Regex::new(r"\$(?:ARGUMENTS\[(\d+)\]|(\d+))").unwrap();
+    let current_string = re.replace_all(body, |caps: &Captures<'_>| {
+        let n_str = caps.get(1).or_else(|| caps.get(2)).unwrap().as_str();
+        let n = n_str.parse::<usize>().unwrap();
+        if args.len() > n {
+            args[n]
+        } else {
+            ""
+        }
+    }).to_string();
+    current_string.replace("$ARGUMENTS", &args.join(" "))
+}
 
 pub struct ToolHandler {
     tool_list: Value
@@ -64,7 +79,22 @@ impl ToolHandler {
                         }
                     }
                 }
-            }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "Skill",
+                    "description": "Load a skill's instructions into the conversation",
+                    "parameters": {
+                        "type": "object",
+                        "required": ["name"],
+                        "properties": {
+                            "name": { "type": "string", "description": "The name of the skill to use" },
+                            "args": { "type": "string", "description": "Optional arguments for the skill" }
+                        }
+                    }
+                }
+            },
         ]);
         Self { tool_list }
     }
@@ -143,6 +173,22 @@ impl ToolHandler {
                 });
                 return Ok(response);
             },
+            "Skill" => {
+                let arguments_values = serde_json::from_str::<Value>(arguments).unwrap();
+                let arguments = arguments_values.as_object().ok_or(anyhow!("Arguments are not a json object"))?;
+                let name = arguments["name"].as_str().unwrap();
+                let mut skill_args = String::new();
+                if arguments.contains_key("args") {
+                    skill_args = arguments["args"].as_str().unwrap_or_default().to_string();
+                }
+                let contents = fs::read_to_string(format!(".claude/skills/{}/SKILL.md", name))?;
+                let body = replace_args(&contents, skill_args.split(' ').collect());
+                return Ok(json!({
+                    "role": "tool",
+                    "tool_call_id": call_id,
+                    "content": body
+                }))
+            }
             _ => ()
         }
         Err(anyhow!("Model requested unavailable tool"))

@@ -1,11 +1,10 @@
 use anyhow::anyhow;
 use async_openai::{Client, config::OpenAIConfig};
 use clap::Parser;
-use regex::{Captures, Regex};
 use serde_json::{Value, json};
 use std::{env, fs, path::Path, process};
 
-use crate::modules::tools::ToolHandler;
+use crate::modules::tools::{ToolHandler, replace_args};
 
 mod modules;
 
@@ -14,20 +13,6 @@ mod modules;
 struct Args {
     #[arg(short = 'p', long)]
     prompt: String,
-}
-
-fn replace_args(body: &str, args: Vec<&str>) -> String {
-    let re = Regex::new(r"\$(?:ARGUMENTS\[(\d+)\]|(\d+))").unwrap();
-    let current_string = re.replace_all(body, |caps: &Captures<'_>| {
-        let n_str = caps.get(1).or_else(|| caps.get(2)).unwrap().as_str();
-        let n = n_str.parse::<usize>().unwrap();
-        if args.len() >= n {
-            args[n]
-        } else {
-            ""
-        }
-    }).to_string();
-    current_string.replace("$ARGUMENTS", &args.join(" "))
 }
 
 #[tokio::main]
