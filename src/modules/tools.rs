@@ -1,8 +1,11 @@
 use std::{fs::{self, File}, io::Write, path::Path, process::Command};
 
 use anyhow::{Result, anyhow};
+use async_openai::config::OpenAIConfig;
 use regex::{Captures, Regex};
 use serde_json::{Value, json};
+
+use crate::modules::agent::Agent;
 
 pub fn replace_args(body: &str, args: Vec<&str>) -> String {
     let re = Regex::new(r"\$(?:ARGUMENTS\[(\d+)\]|(\d+))").unwrap();
@@ -103,7 +106,7 @@ impl ToolHandler {
         self.tool_list.clone()
     }
 
-    pub fn call_tool(&self, name: &str, call_id: Value, arguments: &str) -> Result<Value> {
+    pub async fn call_tool(&self, name: &str, call_id: Value, arguments: &str, config: OpenAIConfig) -> Result<Value> {
         match name {
             "Read" => {
                 let arguments = serde_json::from_str::<Value>(arguments).unwrap();
@@ -182,7 +185,12 @@ impl ToolHandler {
                     skill_args = arguments["args"].as_str().unwrap_or_default().to_string();
                 }
                 let contents = fs::read_to_string(format!(".claude/skills/{}/SKILL.md", name))?;
-                let body = replace_args(&contents, skill_args.split(' ').collect());
+                let frontmatter = serde_yaml::from_str::<serde_yaml::Value>(contents.split("---\n").nth(1).unwrap_or_default())?;
+                let mut body = replace_args(&contents.split("---\n").nth(2).unwrap_or_default(), skill_args.split(' ').collect());
+                if let Some(context) = frontmatter.get("context") && context.as_str().unwrap_or_default() == "fork" {
+                    let mut subagent = Agent::new_with_config(config)?;
+                    body = Box::pin(subagent.handle_request(&body)).await?;
+                }
                 return Ok(json!({
                     "role": "tool",
                     "tool_call_id": call_id,
